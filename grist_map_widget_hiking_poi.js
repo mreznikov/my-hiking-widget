@@ -120,31 +120,32 @@ function loadExistingPOIs(records, mappings) {
         });
     }
 }
-
+// === ЗАМЕНИТЕ ВАШУ ТЕКУЩУЮ handleMapClick НА ЭТУ ВЕРСИЮ ===
 async function handleMapClick(e) {
     if (!e.latlng) return;
     const lat = e.latlng.lat; const lng = e.latlng.lng;
     const positionLeaflet = e.latlng;
     const poiType = "Точка интереса"; const description = "";
 
-    console.log("Map clicked at:", positionLeaflet, "Creating POI. Current RouteRef ID:", g_currentRouteRefId);
+    const popupText = `<b>Тип:</b> ${poiType}<br><small>Коорд.: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>`;
+    console.log("Map clicked at:", positionLeaflet, "Creating POI:", poiType);
+    L.marker(positionLeaflet).addTo(poiMarkersLayer || map).bindPopup(popupText).openPopup();
 
-    // Временный маркер
-    L.marker(positionLeaflet)
-        .addTo(poiMarkersLayer)
-        .bindPopup(`<i>Новая точка (сохраняется для маршрута ID: ${g_currentRouteRefId || '???'})...</i>`)
-        .openPopup();
-
-    let tableIdToUse = currentTableId; // Это ID таблицы Table7
+    let tableIdToUse = currentTableId; // Должен быть ID таблицы Table7
     if (!tableIdToUse && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
         try {
             const idFromMethod = await grist.selectedTable.getTableId();
-            if (idFromMethod && typeof idFromMethod === 'string') { tableIdToUse = idFromMethod; currentTableId = idFromMethod; }
+            if (idFromMethod && typeof idFromMethod === 'string') {
+                tableIdToUse = idFromMethod;
+                currentTableId = idFromMethod; // Сохраняем для последующих вызовов
+                console.log(`DEBUG: Table ID for new POI set to: ${tableIdToUse} via getTableId().`);
+            }
         } catch(err) { console.error("Error getting tableId (Table7) in handleMapClick:", err); }
     }
 
+    // Эта проверка важна. g_currentRouteRefId должен быть установлен в handleGristRecordUpdate
     if (!g_currentRouteRefId) {
-        alert("Сначала выберите точку существующего маршрута в таблице 'Детали Маршрута' (Table7), чтобы определить текущий маршрут, или убедитесь, что таблица отфильтрована по маршруту из Table1, и в ней есть хотя бы одна запись.");
+        alert("Не выбран контекст маршрута. Пожалуйста, сначала выберите существующую точку этого маршрута в таблице 'Детали Маршрута' (Table7), или убедитесь, что таблица отфильтрована по маршруту из Table1, и в ней есть хотя бы одна запись.");
         console.error("Cannot add POI: g_currentRouteRefId is not set. Select a POI from an existing route first, or ensure Table7 is filtered by a route from Table1 and has at least one POI.");
         return;
     }
