@@ -1,34 +1,55 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #207b - с исправленным handleGristRecordUpdate) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #217 - Упрощенный запуск через DOMContentLoaded) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
-let currentTableId = null;
-let currentRecordId = null;
+let currentTableId = null;  // ID таблицы Table7 ("Детали Маршрута")
+let currentRecordId = null; // ID текущей выбранной строки в Table7
 const MARKER_ZOOM_LEVEL = 15;
-let poiMarkersLayer = null;
+let poiMarkersLayer = null; // Слой для хранения маркеров POI
+// g_currentRouteActualRefId будет содержать ID строки из Table1 (например, число или ваш UUID),
+// к которой привязан текущий набор точек в Table7.
+// Это значение извлекается из КОЛОНКИ-ССЫЛКИ таблицы Table7.
 let g_currentRouteActualRefId = null;
 
 // === ОСНОВНЫЕ ФУНКЦИИ ВИДЖЕТА ===
 
 function initMap() {
     console.log("DEBUG: initMap: Leaflet initMap() for Israel Hiking Map called.");
-    const initialCoords = [31.5, 34.8]; const initialZoom = 8;
+    const initialCoords = [31.5, 34.8]; // Пример: центр Израиля
+    const initialZoom = 8;
     try {
+        // Дополнительная проверка на L перед использованием
+        if (typeof L === 'undefined' || L === null || typeof L.map !== 'function') {
+            console.error("DEBUG: initMap: Leaflet (L) is not available at the moment of initMap call!");
+            alert("Критическая ошибка: Leaflet не загружен. Карта не может быть создана.");
+            return;
+        }
+
         const mapDiv = document.getElementById('map');
         if (!mapDiv) { console.error("DEBUG: initMap: Map container #map not found!"); return; }
+
         map = L.map('map').setView(initialCoords, initialZoom);
         console.log("DEBUG: initMap: Leaflet Map object created.");
+
         L.tileLayer('https://israelhiking.osm.org.il/English/Tiles/{z}/{x}/{y}.png', {
             maxZoom: 16, minZoom: 7,
             attribution: 'Tiles &copy; <a href="https://israelhiking.osm.org.il" target="_blank">Israel Hiking Map</a> CC BY-NC-SA 3.0 | Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
         }).addTo(map);
         console.log("DEBUG: initMap: OSM TileLayer (Israel Hiking) added.");
+
         poiMarkersLayer = L.layerGroup().addTo(map);
         console.log("DEBUG: initMap: poiMarkersLayer initialized and added to map.");
+
         map.on('click', handleMapClick);
         console.log("DEBUG: initMap: Leaflet map click listener added.");
+
         setupGrist();
-    } catch (e) { console.error("DEBUG: initMap: Error creating Leaflet Map object:", e); alert("Error creating Leaflet Map: " + e.message); }
+    } catch (e) {
+        console.error("DEBUG: initMap: Error creating Leaflet Map object:", e);
+        alert("Error creating Leaflet Map: " + e.message);
+        const mapDiv = document.getElementById('map');
+        if (mapDiv) { mapDiv.innerHTML = '<p>Ошибка создания карты Leaflet.</p>'; }
+    }
 }
 
 function setupGrist() {
@@ -42,7 +63,7 @@ function setupGrist() {
             { name: "C", type: 'Numeric', title: 'Широта' },
             { name: "D", type: 'Numeric', title: 'Долгота' },
             { name: "G", type: 'Text', optional: true, title: 'Описание POI' },
-            // ВАЖНО: Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+            // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
             { name: "RouteLink", type: 'Any', title: 'ID Связанного Маршрута (Ref->Table1)' }
         ]
     });
@@ -58,18 +79,23 @@ function handleOptionsUpdate(options, interaction) {
     if (options && options.tableId) { foundTableId = options.tableId; }
     else if (interaction && interaction.tableId) { foundTableId = interaction.tableId; }
     else if (options && options.tableRef) { foundTableId = String(options.tableRef); }
-    if (foundTableId) { currentTableId = String(foundTableId); console.log(`DEBUG: handleOptionsUpdate: Current Table ID (Table7) set to: ${currentTableId}`);}
-    else { console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 in options/interaction."); currentTableId = null; }
+
+    if (foundTableId) {
+         currentTableId = String(foundTableId); // ID таблицы Table7
+         console.log(`DEBUG: handleOptionsUpdate: Current Table ID (Table7) set to: ${currentTableId}`);
+    } else {
+        console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 in options/interaction. Will rely on getTableId() at click time.");
+        currentTableId = null;
+    }
 }
 
-// --- ИСПРАВЛЕННАЯ ВЕРСИЯ ИЗ #204 ---
 function handleGristRecordUpdate(record, mappings) {
     console.log("DEBUG: handleGristRecordUpdate: Raw 'record' object received from Grist:", JSON.parse(JSON.stringify(record || {})));
     if (!map) { console.error("DEBUG: handleGristRecordUpdate: Map not initialized yet."); return; }
-    currentRecordId = record ? record.id : null;
+    currentRecordId = record ? record.id : null; // ID текущей выбранной строки в Table7
 
     if (record && typeof record.id !== 'undefined') {
-        // Используем 'RouteLink' как подтвержденный ID вашей колонки-ссылки
+        // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const refValue = record.RouteLink;
 
         console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink (refValue):", refValue);
@@ -77,16 +103,19 @@ function handleGristRecordUpdate(record, mappings) {
 
         let extractedRouteId = null;
 
-        if (typeof refValue === 'number') {
+        if (typeof refValue === 'number') { // Если это уже число (стандартный ID Grist)
             extractedRouteId = refValue;
             console.log("DEBUG: handleGristRecordUpdate: refValue is a number.");
         } else if (typeof refValue === 'object' && refValue !== null && refValue.hasOwnProperty('rowId')) {
-            extractedRouteId = refValue.rowId; // Извлекаем rowId
+            // Если это объект вида {tableId: 'Table1', rowId: 2} (или ваш UUID в rowId)
+            extractedRouteId = refValue.rowId;
             console.log("DEBUG: handleGristRecordUpdate: refValue is an object, extracted rowId:", extractedRouteId);
         } else if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
-            extractedRouteId = refValue[1];
+            // Формат Grist для ссылок: ["L<table_pk_или_id>", row_id_или_uuid]
+            extractedRouteId = refValue[1]; // Это может быть число или ваш текстовый UUID
             console.log("DEBUG: handleGristRecordUpdate: refValue is Grist link array, extracted ID/UUID:", extractedRouteId);
         } else if (typeof refValue === 'string' && refValue.trim() !== "") {
+            // Если это строка, это может быть ваш текстовый UUID или число в строке.
             extractedRouteId = refValue;
             console.log("DEBUG: handleGristRecordUpdate: refValue is a string, using it as is (e.g., for UUID).");
         } else {
@@ -95,8 +124,7 @@ function handleGristRecordUpdate(record, mappings) {
 
         g_currentRouteActualRefId = extractedRouteId;
 
-        // Если ваш ID маршрута (UUID или другой) является числом или строкой, представляющей число,
-        // и Grist ожидает число для связи по Ref-колонке.
+        // Если ваш UUID числовой и приходит как строка, а Grist для записи в Ref-колонку ожидает число:
         if (g_currentRouteActualRefId !== null && typeof g_currentRouteActualRefId !== 'undefined' && !isNaN(Number(g_currentRouteActualRefId))) {
              g_currentRouteActualRefId = Number(g_currentRouteActualRefId);
         }
@@ -115,14 +143,115 @@ function handleGristRecordUpdate(record, mappings) {
     }
 }
 
+function loadExistingPOIs(records, mappings) {
+    console.log("DEBUG: loadExistingPOIs: Called for Table7. Received records count:", records ? records.length : 0);
+    if (!map || !poiMarkersLayer) {
+        console.warn("DEBUG: loadExistingPOIs: Map or POI layer not ready.");
+        return;
+    }
+    poiMarkersLayer.clearLayers();
+    console.log("DEBUG: loadExistingPOIs: Previous POI markers cleared.");
 
-function loadExistingPOIs(records, mappings) { /* ... без изменений из #196 ... */ }
-async function handleMapClick(e) { /* ... без изменений из #196, но теперь с более надежным g_currentRouteActualRefId ... */ }
-function updateMarkerOnMap(position, label) { /* ... без изменений из #196 ... */ }
-function checkLeafletApi() { /* ... без изменений из #196 ... */ }
+    if (records && records.length > 0) {
+        let addedCount = 0;
+        records.forEach(record => {
+            const routeNameFromFormula = record.A;
+            const type = record.B;
+            const lat = record.C;
+            const lng = record.D;
+            const description = record.G || "";
 
-// === ТОЧКА ВХОДА ===
-console.log("DEBUG: Main script: --- START --- About to call checkLeafletApi for the first time.");
-checkLeafletApi();
+            let popupText = `<b>Маршрут:</b> ${routeNameFromFormula || "N/A"}<br><b>Тип:</b> ${type || "N/A"}`;
+            if (description) { popupText += `<br><b>Описание:</b> ${description}`; }
+            popupText += `<br><small>ID точки: ${record.id}</small>`;
+
+            if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
+                L.marker(L.latLng(lat, lng), { gristRecordId: record.id })
+                    .addTo(poiMarkersLayer)
+                    .bindPopup(popupText);
+                addedCount++;
+            }
+        });
+        console.log(`DEBUG: loadExistingPOIs: Loaded ${addedCount} POIs onto the map.`);
+    } else { console.log("DEBUG: loadExistingPOIs: No POIs to load from Grist."); }
+}
+
+async function handleMapClick(e) {
+    if (!e.latlng) return;
+    const lat = e.latlng.lat; const lng = e.latlng.lng;
+    const positionLeaflet = e.latlng;
+    const poiType = "Точка интереса"; const description = "";
+
+    console.log("DEBUG: handleMapClick: Clicked. Current RouteRef ID to use:", g_currentRouteActualRefId, `(Type: ${typeof g_currentRouteActualRefId})`);
+
+    L.marker(positionLeaflet)
+        .addTo(poiMarkersLayer)
+        .bindPopup(`<i>Новая точка (связь с ID: ${g_currentRouteActualRefId || '???'})...</i>`)
+        .openPopup();
+
+    let tableIdToUse = currentTableId; // ID таблицы Table7
+    if (!tableIdToUse && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
+        try {
+            const idFromMethod = await grist.selectedTable.getTableId();
+            if (idFromMethod && typeof idFromMethod === 'string') { tableIdToUse = idFromMethod; currentTableId = idFromMethod; }
+        } catch(err) { console.error("DEBUG: handleMapClick: Error getting Table7 ID:", err); }
+    }
+
+    if (g_currentRouteActualRefId === null || typeof g_currentRouteActualRefId === 'undefined') {
+        alert("Контекст маршрута не определен. Сначала выберите маршрут в Table1 (чтобы Table7 отфильтровалась) и кликните на существующую точку в Table7 (если она есть), чтобы виджет 'запомнил' текущий маршрут.");
+        console.error("DEBUG: handleMapClick: Cannot add POI - g_currentRouteActualRefId is null or undefined.");
+        return;
+    }
+
+    // Используем g_currentRouteActualRefId как есть (число или строка UUID)
+    const routeRefValueForGrist = g_currentRouteActualRefId;
+
+    if (tableIdToUse && typeof tableIdToUse === 'string') {
+        // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        const newRecord = {
+            'RouteLink': routeRefValueForGrist,
+            'B': poiType,
+            'C': lat,
+            'D': lng,
+            'G': description
+        };
+        const userActions = [ ['AddRecord', tableIdToUse, null, newRecord] ];
+        console.log(`DEBUG: handleMapClick: Attempting to add record to Grist table ${tableIdToUse}:`, JSON.stringify(newRecord));
+        try {
+            if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi not available."); }
+            await grist.docApi.applyUserActions(userActions);
+            console.log(`DEBUG: handleMapClick: New POI record add action sent successfully.`);
+        } catch (error) {
+            console.error(`DEBUG: handleMapClick: Failed to add record to Grist:`, error);
+            alert(`Ошибка добавления POI в Grist: ${error.message}`);
+        }
+    } else {
+        console.error("DEBUG: handleMapClick: Cannot add record - Table7 ID is unknown.", tableIdToUse);
+        alert("Не удалось добавить POI: ID таблицы 'Детали Маршрута' неизвестен.");
+    }
+}
+
+function updateMarkerOnMap(position, label) {
+    // console.log("DEBUG: updateMarkerOnMap called (mostly for centering from onRecord)");
+}
+
+// === ТОЧКА ВХОДА: Используем DOMContentLoaded ===
+console.log("DEBUG: Main script: --- START --- Setting up DOMContentLoaded listener.");
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("DEBUG: Main script: DOMContentLoaded event fired!");
+    // Проверяем Leaflet перед вызовом initMap
+    if (typeof L === 'object' && L !== null && typeof L.map === 'function') {
+        console.log("DEBUG: Main script: Leaflet (L) is DEFINED on DOMContentLoaded. Calling initMap().");
+        initMap();
+    } else {
+        let leafletStatus = "Leaflet (L) is UNDEFINED on DOMContentLoaded.";
+        if (typeof L === 'object' && L !== null) { leafletStatus = "Leaflet (L) is an object, but L.map is NOT a function on DOMContentLoaded."; }
+        else if (typeof L !== 'undefined') { leafletStatus = `Leaflet (L) is of type ${typeof L} on DOMContentLoaded, not an object.`; }
+        console.error(`DEBUG: Main script: ${leafletStatus} Cannot call initMap safely. Check Leaflet loading in HTML and Network tab.`);
+        alert("Критическая ошибка: Библиотека Leaflet (L) не загрузилась к моменту готовности документа. Карта не может быть создана.");
+    }
+});
+
 console.log("DEBUG: Main script: --- END --- grist_map_widget_hiking_poi.js has finished initial synchronous execution.");
 // === КОНЕЦ СКРИПТА ===
