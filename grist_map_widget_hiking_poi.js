@@ -1,4 +1,4 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #196 - Полная, с детальным логгингом checkLeafletApi) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #199b - Улучшенная обработка Ref ID) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
@@ -6,16 +6,15 @@ let currentTableId = null;  // ID таблицы Table7 ("Детали Марш�
 let currentRecordId = null; // ID текущей выбранной строки в Table7
 const MARKER_ZOOM_LEVEL = 15;
 let poiMarkersLayer = null; // Слой для хранения маркеров POI
-// g_currentRouteActualRefId будет содержать ID строки из Table1 (например, число или ваш UUID),
+// g_currentRouteActualRefId будет содержать ID строки из Table1 (число или текстовый UUID),
 // к которой привязан текущий набор точек в Table7.
-// Это значение извлекается из КОЛОНКИ-ССЫЛКИ таблицы Table7.
 let g_currentRouteActualRefId = null;
 
 // === ОСНОВНЫЕ ФУНКЦИИ ВИДЖЕТА ===
 
 function initMap() {
     console.log("DEBUG: initMap: Leaflet initMap() for Israel Hiking Map called.");
-    const initialCoords = [31.5, 34.8]; // Пример: центр Израиля
+    const initialCoords = [31.5, 34.8];
     const initialZoom = 8;
     try {
         const mapDiv = document.getElementById('map');
@@ -44,16 +43,13 @@ function setupGrist() {
     grist.ready({
         requiredAccess: 'full',
         columns: [
-            // Колонка A в Table7 - для названия маршрута (должна быть ФОРМУЛЬНОЙ в Grist: $RouteLink.Имя_или_UUID_из_Table1)
-            { name: "A", type: 'Any',    optional: true, title: 'Название Маршрута (из Table1)' },
-            { name: "B", type: 'Text',    title: 'Тип объекта' }, // "Точка интереса"
+            { name: "A", type: 'Any',    optional: true, title: 'Название Маршрута (Формула из Grist)' },
+            { name: "B", type: 'Text',    title: 'Тип объекта' },
             { name: "C", type: 'Numeric', title: 'Широта' },
             { name: "D", type: 'Numeric', title: 'Долгота' },
             { name: "G", type: 'Text', optional: true, title: 'Описание POI' },
-            // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7,
-            // которая ссылается на Table1 (на ее колонку id или вашу колонку UUID).
-            // Тип Grist для нее будет "Reference" или "Reference List". Для API можно указать 'Any'.
-            { name: "RouteLink", type: 'Any', title: 'ID Связанного Маршрута (Ref->Table1)' }
+            // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+            { name: "RouteLink_actual_ID", type: 'Any', title: 'Ссылка на Маршрут (ID строки из Table1)' }
         ]
     });
     grist.onOptions(handleOptionsUpdate);
@@ -73,39 +69,48 @@ function handleOptionsUpdate(options, interaction) {
          currentTableId = String(foundTableId); // ID таблицы Table7
          console.log(`DEBUG: handleOptionsUpdate: Current Table ID (Table7) set to: ${currentTableId}`);
     } else {
-        console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 in options/interaction. Will rely on getTableId() at click time.");
+        console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 in options/interaction.");
         currentTableId = null;
     }
 }
 
+/**
+ * Обработчик выбора/обновления строки в Table7.
+ * Извлекает ID связанного маршрута из Table1 (через колонку-ссылку Table7).
+ */
 function handleGristRecordUpdate(record, mappings) {
-    console.log("DEBUG: handleGristRecordUpdate: Grist: new selected record in Table7:", record);
-    if (!map) { return; }
+    console.log("DEBUG: handleGristRecordUpdate: Raw 'record' object received from Grist:", JSON.parse(JSON.stringify(record || {})));
+
+    if (!map) { console.error("DEBUG: handleGristRecordUpdate: Map not initialized yet."); return; }
     currentRecordId = record ? record.id : null; // ID текущей выбранной строки в Table7
 
     if (record && typeof record.id !== 'undefined') {
-        // ВАЖНО: Читаем значение из КОЛОНКИ-ССЫЛКИ 'RouteLink'.
-        // ЗАМЕНИТЕ 'RouteLink' на ID вашей колонки-ссылки!
-        // Это значение должно быть ID (числовым или вашим UUID) из Table1.
-        const refValue = record.RouteLink;
+        // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        const refValue = record.RouteLink_actual_ID;
+
+        console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink_actual_ID (refValue):", refValue);
+        console.log(`DEBUG: handleGristRecordUpdate: Type of record.RouteLink_actual_ID (refValue): ${typeof refValue}`);
+
         let extractedRouteId = null;
 
-        if (typeof refValue === 'number') { // Стандартный ID Grist (число)
+        if (typeof refValue === 'number') { // Если это уже число (стандартный ID Grist)
             extractedRouteId = refValue;
         } else if (typeof refValue === 'string' && refValue.trim() !== "") {
-            // Если это ваш текстовый UUID или число в строке
+            // Если это строка, это может быть ваш текстовый UUID или число в строке.
+            // Grist для Ref колонки обычно ожидает число, если это не настроено иначе (показ другой колонки).
+            // Но если ваш UUID это primary key для Table1 и ссылка идет на него, то оставляем как строку.
             extractedRouteId = refValue;
-        } else if (Array.isArray(refValue) && refValue.length > 0 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
-            // Это формат Grist для ссылок: ["L<table_pk>", row_id] или ["L<table_name>", row_id]
-            // Нас интересует row_id (второй элемент)
-            if (refValue.length === 2) { // Ожидаем два элемента
-                 extractedRouteId = refValue[1]; // Может быть числом или строкой (вашим UUID)
-            }
+            console.log("DEBUG: handleGristRecordUpdate: refValue is a string, using it as is (e.g., for UUID).");
+        } else if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
+            // Формат Grist для ссылок: ["L<table_pk_или_id>", row_id_или_uuid]
+            extractedRouteId = refValue[1]; // Это может быть число или ваш текстовый UUID
+            console.log("DEBUG: handleGristRecordUpdate: refValue is Grist link array, extracted ID/UUID:", extractedRouteId);
+        } else {
+            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink_actual_ID is in an unexpected format or null/empty.");
         }
-        // Можно добавить console.log(`DEBUG: handleGristRecordUpdate: Raw refValue for RouteLink:`, refValue, `(Type: ${typeof refValue})`);
 
         g_currentRouteActualRefId = extractedRouteId;
-        console.log(`DEBUG: handleGristRecordUpdate: Current g_currentRouteActualRefId (ID of route in Table1, from Table7.RouteLink) set to: ${g_currentRouteActualRefId} (Type: ${typeof g_currentRouteActualRefId})`);
+        console.log(`DEBUG: handleGristRecordUpdate: Global g_currentRouteActualRefId set to: ${g_currentRouteActualRefId} (Type: ${typeof g_currentRouteActualRefId})`);
 
         const lat = record.C; const lng = record.D;
         if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
@@ -113,32 +118,27 @@ function handleGristRecordUpdate(record, mappings) {
         }
     } else {
         g_currentRouteActualRefId = null;
-        console.log("DEBUG: handleGristRecordUpdate: No POI selected, g_currentRouteActualRefId reset.");
+        console.log("DEBUG: handleGristRecordUpdate: No POI selected or record is invalid, g_currentRouteActualRefId reset.");
     }
 }
 
+
 function loadExistingPOIs(records, mappings) {
     console.log("DEBUG: loadExistingPOIs: Called for Table7. Received records count:", records ? records.length : 0);
-    if (!map || !poiMarkersLayer) {
-        console.warn("DEBUG: loadExistingPOIs: Map or POI layer not ready.");
-        return;
-    }
+    if (!map || !poiMarkersLayer) { return; }
     poiMarkersLayer.clearLayers();
-    console.log("DEBUG: loadExistingPOIs: Previous POI markers cleared.");
 
     if (records && records.length > 0) {
         let addedCount = 0;
         records.forEach(record => {
-            const routeNameFromFormula = record.A; // Это значение из формульной колонки A ($RouteLink.A или $RouteLink.UUID)
+            const routeNameFromFormula = record.A; // Значение из формульной колонки A
             const type = record.B;
             const lat = record.C;
             const lng = record.D;
             const description = record.G || "";
-
             let popupText = `<b>Маршрут:</b> ${routeNameFromFormula || "N/A"}<br><b>Тип:</b> ${type || "N/A"}`;
             if (description) { popupText += `<br><b>Описание:</b> ${description}`; }
             popupText += `<br><small>ID точки: ${record.id}</small>`;
-
             if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
                 L.marker(L.latLng(lat, lng), { gristRecordId: record.id })
                     .addTo(poiMarkersLayer)
@@ -146,8 +146,8 @@ function loadExistingPOIs(records, mappings) {
                 addedCount++;
             }
         });
-        console.log(`DEBUG: loadExistingPOIs: Loaded ${addedCount} POIs onto the map.`);
-    } else { console.log("DEBUG: loadExistingPOIs: No POIs to load from Grist."); }
+        console.log(`DEBUG: loadExistingPOIs: Loaded ${addedCount} POIs.`);
+    } else { console.log("DEBUG: loadExistingPOIs: No POIs to load."); }
 }
 
 async function handleMapClick(e) {
@@ -156,7 +156,7 @@ async function handleMapClick(e) {
     const positionLeaflet = e.latlng;
     const poiType = "Точка интереса"; const description = "";
 
-    console.log("DEBUG: handleMapClick: Map clicked at:", positionLeaflet, "Creating POI. Current RouteRef ID to use:", g_currentRouteActualRefId);
+    console.log("DEBUG: handleMapClick: Clicked. Current RouteRef ID to use:", g_currentRouteActualRefId);
 
     L.marker(positionLeaflet)
         .addTo(poiMarkersLayer)
@@ -172,19 +172,19 @@ async function handleMapClick(e) {
     }
 
     if (!g_currentRouteActualRefId) {
-        alert("Контекст маршрута не определен. Сначала выберите маршрут в Table1 (чтобы Table7 отфильтровалась) и кликните на существующую точку в Table7 (если она есть), чтобы виджет 'запомнил' текущий маршрут.");
+        alert("Контекст маршрута не определен. Выберите существующую точку маршрута в Table7, или убедитесь, что Table7 отфильтрована по маршруту из Table1 и содержит хотя бы одну точку.");
         console.error("DEBUG: handleMapClick: Cannot add POI - g_currentRouteActualRefId is not set.");
         return;
     }
 
-    // ВАЖНО: g_currentRouteActualRefId УЖЕ ДОЛЖЕН БЫТЬ ПРАВИЛЬНЫМ ID (числом или вашим UUID-строкой)
-    // Grist должен сам правильно обработать значение для колонки типа Reference.
+    // Используем g_currentRouteActualRefId как есть (число или строка UUID)
+    // Grist должен сам обработать тип для колонки "Reference".
     const routeRefValueForGrist = g_currentRouteActualRefId;
 
     if (tableIdToUse && typeof tableIdToUse === 'string') {
-        // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const newRecord = {
-            'RouteLink': routeRefValueForGrist, // Передаем ID (число или UUID-строку)
+            'RouteLink_actual_ID': routeRefValueForGrist,
             'B': poiType,
             'C': lat,
             'D': lng,
@@ -207,11 +207,9 @@ async function handleMapClick(e) {
     }
 }
 
-function updateMarkerOnMap(position, label) {
-    // console.log("DEBUG: updateMarkerOnMap called (mostly for centering from onRecord)");
-}
+function updateMarkerOnMap(position, label) { /* Не используется активно для POI */ }
 
-// === БЛОК РУЧНОЙ ИНИЦИАЛИЗАЦИИ LEAFLET (из ответа #177) ===
+// === БЛОК РУЧНОЙ ИНИЦИАЛИЗАЦИИ LEAFLET ===
 function checkLeafletApi() {
     console.log("DEBUG: checkLeafletApi: --- Top of function ---");
     try {
@@ -220,23 +218,19 @@ function checkLeafletApi() {
             initMap();
         } else {
             let leafletStatus = "Leaflet (L) is UNDEFINED.";
-            if (typeof L === 'object' && L !== null) {
-                leafletStatus = "Leaflet (L) is an object, but L.map is NOT a function.";
-            } else if (typeof L !== 'undefined') {
-                leafletStatus = `Leaflet (L) is of type ${typeof L}, not an object.`;
-            }
+            if (typeof L === 'object' && L !== null) { leafletStatus = "Leaflet (L) is an object, but L.map is NOT a function."; }
+            else if (typeof L !== 'undefined') { leafletStatus = `Leaflet (L) is of type ${typeof L}, not an object.`; }
             console.warn(`DEBUG: checkLeafletApi: ${leafletStatus} Will retry in 250ms.`);
             setTimeout(checkLeafletApi, 250);
         }
     } catch (e) {
         console.error("DEBUG: checkLeafletApi: !!! ERROR WITHIN checkLeafletApi !!!", e);
-        console.warn("DEBUG: checkLeafletApi: Retrying after error in 1000ms.");
         setTimeout(checkLeafletApi, 1000);
     }
     console.log("DEBUG: checkLeafletApi: --- Bottom of function (after if/else or error) ---");
 }
 
-// === ТОЧКА ВХОДА (ПРЯМОЙ ВЫЗОВ ПРОВЕРКИ API) ===
+// === ТОЧКА ВХОДА ===
 console.log("DEBUG: Main script: --- START --- About to call checkLeafletApi for the first time.");
 checkLeafletApi();
 console.log("DEBUG: Main script: --- END --- grist_map_widget_hiking_poi.js has finished initial synchronous execution.");
