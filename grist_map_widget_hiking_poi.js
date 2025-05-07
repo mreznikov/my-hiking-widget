@@ -1,11 +1,12 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #171b - фокус на poiMarkersLayer) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #175 - с Route Name в POI) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
 let currentTableId = null;
 let currentRecordId = null;
 const MARKER_ZOOM_LEVEL = 15;
-let poiMarkersLayer = null; // Слой для хранения маркеров POI
+let poiMarkersLayer = null;
+let g_currentRouteName = null; // НОВОЕ: для хранения имени выбранного маршрута
 
 // === ОСНОВНЫЕ ФУНКЦИИ ВИДЖЕТА ===
 
@@ -22,11 +23,8 @@ function initMap() {
             attribution: 'Tiles &copy; <a href="https://israelhiking.osm.org.il" target="_blank">Israel Hiking Map</a> CC BY-NC-SA 3.0 | Map data &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
         }).addTo(map);
         console.log("OSM TileLayer (Israel Hiking) added.");
-
-        // Инициализируем слой для маркеров сразу
         poiMarkersLayer = L.layerGroup().addTo(map);
         console.log("poiMarkersLayer initialized and added to map.");
-
         map.on('click', handleMapClick);
         console.log("Leaflet map click listener added.");
         setupGrist();
@@ -34,11 +32,12 @@ function initMap() {
 }
 
 function setupGrist() {
-     if (typeof grist === 'undefined' || !grist.ready) { return; }
+     if (typeof grist === 'undefined' || !grist.ready) { console.error("Grist API not found..."); return; }
      console.log("Setting up Grist interaction...");
     grist.ready({
         requiredAccess: 'full',
         columns: [
+            { name: "A", type: 'Text',    optional: true, title: 'Название Маршрута' }, // ИЗМЕНЕНО
             { name: "B", type: 'Text',    title: 'Тип объекта' },
             { name: "C", type: 'Numeric', title: 'Широта' },
             { name: "D", type: 'Numeric', title: 'Долгота' },
@@ -46,13 +45,12 @@ function setupGrist() {
         ]
     });
     grist.onOptions(handleOptionsUpdate);
-    grist.onRecords(loadExistingPOIs); // Этот будет перерисовывать все POI
-    grist.onRecord(handleGristRecordUpdate); // Этот будет центрировать карту
+    grist.onRecords(loadExistingPOIs);
+    grist.onRecord(handleGristRecordUpdate);
     console.log("Grist API ready, listening for records and options...");
 }
 
 function handleOptionsUpdate(options, interaction) {
-    // ... (код без изменений) ...
     console.log("Grist: Received options update:", options);
     let foundTableId = null;
     if (options && options.tableId) { foundTableId = options.tableId; }
@@ -64,45 +62,52 @@ function handleOptionsUpdate(options, interaction) {
 
 function handleGristRecordUpdate(record, mappings) {
     console.log("Grist: handleGristRecordUpdate - new selected record:", record);
-    if (!map || !record || typeof record.id === 'undefined') { return; }
-    currentRecordId = record.id; // Обновляем ID выбранной строки
-    const lat = record.C; const lng = record.D;
-    if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
-        const position = L.latLng(lat, lng);
-        map.flyTo(position, MARKER_ZOOM_LEVEL);
-        console.log("Map flew to selected POI from Grist:", position);
-        // Открытие существующего Popup, если маркеры хранятся с доп. опциями
-        if (poiMarkersLayer) {
-            poiMarkersLayer.eachLayer(layer => {
-                if (layer.options && layer.options.gristRecordId === record.id) {
-                    layer.openPopup();
-                }
-            });
+    if (!map) { return; }
+    currentRecordId = record ? record.id : null;
+
+    if (record && typeof record.id !== 'undefined') {
+        // Обновляем глобальное имя маршрута на основе выбранной/отфильтрованной строки в Table7
+        // Предполагаем, что колонка A в Table7 содержит имя маршрута
+        g_currentRouteName = record.A || null;
+        console.log(`Current route name set from selected POI in Table7: ${g_currentRouteName}`);
+
+        const lat = record.C; const lng = record.D;
+        if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
+            const position = L.latLng(lat, lng);
+            map.flyTo(position, MARKER_ZOOM_LEVEL);
+            console.log("Map flew to selected POI from Grist:", position);
         }
+    } else {
+        console.log("No specific POI record selected in Table7 (or table is empty). Route name might be stale if not set otherwise.");
+        // Если Table7 пуста для выбранного маршрута из Table1, g_currentRouteName не обновится здесь.
+        // В этом случае при добавлении точки будет использовано предыдущее значение g_currentRouteName
+        // или "Неопределенный маршрут", если оно было null.
     }
 }
 
 function loadExistingPOIs(records, mappings) {
     console.log("loadExistingPOIs called. Received records count:", records ? records.length : 0);
     if (!map) { console.error("Map not initialized in loadExistingPOIs"); return; }
-    if (!poiMarkersLayer) {
-        poiMarkersLayer = L.layerGroup().addTo(map);
-        console.warn("poiMarkersLayer was not initialized, creating now.");
-    }
+    if (!poiMarkersLayer) { poiMarkersLayer = L.layerGroup().addTo(map); }
+
     poiMarkersLayer.clearLayers();
     console.log("Previous POI markers cleared from poiMarkersLayer.");
 
     if (records && records.length > 0) {
         let addedCount = 0;
         records.forEach(record => {
-            const type = record.B; const lat = record.C; const lng = record.D;
-            const description = record.G || "";
-            let popupText = `<b>Тип:</b> ${type || "N/A"}`;
+            const routeName = record.A; // Имя маршрута
+            const type = record.B;      // Тип объекта
+            const lat = record.C;       // Широта
+            const lng = record.D;       // Долгота
+            const description = record.G || ""; // Описание
+
+            let popupText = `<b>Маршрут:</b> ${routeName || "N/A"}<br><b>Тип:</b> ${type || "N/A"}`;
             if (description) { popupText += `<br><b>Описание:</b> ${description}`; }
             popupText += `<br><small>ID: ${record.id}</small>`;
 
             if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
-                L.marker(L.latLng(lat, lng), { gristRecordId: record.id }) // Сохраняем Grist ID в опциях маркера
+                L.marker(L.latLng(lat, lng), { gristRecordId: record.id })
                     .addTo(poiMarkersLayer)
                     .bindPopup(popupText);
                 addedCount++;
@@ -117,44 +122,71 @@ async function handleMapClick(e) {
     const lat = e.latlng.lat; const lng = e.latlng.lng;
     const positionLeaflet = e.latlng;
     const poiType = "Точка интереса"; const description = "";
-    const popupText = `<b>Тип:</b> ${poiType}<br><small>Координаты: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>`;
-    console.log("Map clicked at:", positionLeaflet, "Creating POI:", poiType, "Desc: (empty)");
 
-    // 1. Визуальный маркер при клике - НЕ ДОБАВЛЯЕМ СРАЗУ.
-    // Вместо этого, Grist после добавления записи пришлет onRecords,
-    // и маркер добавится в loadExistingPOIs. Это предотвратит дублирование.
-    // Если хотите немедленный отклик, можно создать временный маркер и удалять его.
-    // L.marker(positionLeaflet).addTo(poiMarkersLayer).bindPopup(popupText).openPopup();
+    // Используем g_currentRouteName, которое должно было обновиться из handleGristRecordUpdate
+    const routeNameForNewPoi = g_currentRouteName || "Маршрут не определен";
+
+    const popupText = `<b>Маршрут:</b> ${routeNameForNewPoi}<br><b>Тип:</b> ${poiType}<br><small>Коорд.: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>`;
+    console.log("Map clicked at:", positionLeaflet, "Creating POI for route:", routeNameForNewPoi);
+
+    L.marker(positionLeaflet).addTo(poiMarkersLayer || map).bindPopup(popupText).openPopup();
 
     let tableIdToUse = currentTableId;
     if (!tableIdToUse && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
-        try { /* ... код получения tableId ... */ } catch(err) { /* ... */ }
+        try {
+            const idFromMethod = await grist.selectedTable.getTableId();
+            if (idFromMethod && typeof idFromMethod === 'string') {
+                tableIdToUse = idFromMethod; currentTableId = idFromMethod;
+                console.log(`DEBUG: Table ID for new POI set to: ${tableIdToUse} via getTableId().`);
+            }
+        } catch(err) { console.error("Error getting tableId in handleMapClick:", err); }
     }
 
     if (tableIdToUse && typeof tableIdToUse === 'string') {
-        const newRecord = { 'B': poiType, 'C': lat, 'D': lng, 'G': description };
+        const newRecord = {
+            'A': routeNameForNewPoi, // Имя маршрута
+            'B': poiType,            // Тип объекта
+            'C': lat,                // Широта
+            'D': lng,                // Долгота
+            'G': description         // Пустое описание
+        };
         const userActions = [ ['AddRecord', tableIdToUse, null, newRecord] ];
         console.log(`Attempting to add record to Grist table ID: ${tableIdToUse}`, JSON.stringify(newRecord));
         try {
             if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi not available."); }
-            console.log("Sending to Grist (applyUserActions):", JSON.stringify(userActions));
             await grist.docApi.applyUserActions(userActions);
             console.log(`New POI record add action sent successfully to Grist.`);
-        } catch (error) { /* ... error handling ... */ }
-    } else { /* ... error handling for tableId ... */ }
+        } catch (error) {
+            console.error(`Failed to add record to Grist:`, error);
+            alert(`Ошибка добавления POI в Grist: ${error.message}`);
+        }
+    } else {
+        console.error("Cannot add record: Table ID is unknown or invalid.", tableIdToUse);
+        alert("Не удалось добавить POI: ID таблицы неизвестен.");
+    }
 }
 
-// Функция updateMarkerOnMap больше не нужна в ее предыдущем виде, так как loadExistingPOIs
-// перерисовывает все маркеры. Оставим ее пустой или удалим, если не используется для других целей.
 function updateMarkerOnMap(position, label) {
-    console.log("updateMarkerOnMap called, but POIs are redrawn by loadExistingPOIs. Centering map for selected record.");
+    // Эта функция больше не управляет одиночным маркером для POI, loadExistingPOIs делает это.
+    // Она может использоваться для подсветки/центрирования, как в handleGristRecordUpdate.
+    console.log("updateMarkerOnMap called for general marker update/pan.");
     if (map) {
-        // map.flyTo(L.latLng(position), MARKER_ZOOM_LEVEL); // Уже делается в handleGristRecordUpdate
+        // map.flyTo(L.latLng(position), MARKER_ZOOM_LEVEL); // flyTo уже есть в handleGristRecordUpdate
     }
 }
 
 // === БЛОК РУЧНОЙ ИНИЦИАЛИЗАЦИИ LEAFLET ===
-function checkLeafletApi() { /* ... код без изменений ... */ }
+function checkLeafletApi() {
+    console.log("DEBUG: === ENTERING checkLeafletApi ===");
+    if (typeof L === 'object' && L !== null && typeof L.map === 'function') {
+        console.log("DEBUG: Leaflet API check PASSED.");
+        initMap();
+    } else {
+        console.warn("DEBUG: Leaflet API check FAILED. Retrying shortly...");
+        setTimeout(checkLeafletApi, 250);
+    }
+    console.log("DEBUG: === EXITING checkLeafletApi (may retry via timeout) ===");
+}
 // === ТОЧКА ВХОДА (ПРЯМОЙ ВЫЗОВ ПРОВЕРКИ API) ===
 console.log("DEBUG: Calling checkLeafletApi directly now for Israel Hiking Map POI widget.");
 checkLeafletApi();
