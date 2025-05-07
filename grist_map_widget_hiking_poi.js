@@ -65,14 +65,34 @@ function handleOptionsUpdate(options, interaction) {
 }
 
 function handleGristRecordUpdate(record, mappings) {
-    console.log("Grist: handleGristRecordUpdate - new selected record in Table7:", record);
+    console.log("Grist: handleGristRecordUpdate - selected record in Table7:", record);
     if (!map) { return; }
-    currentRecordId = record ? record.id : null;
+    currentRecordId = record ? record.id : null; // ID текущей выбранной строки в Table7
 
     if (record && typeof record.id !== 'undefined') {
-        // ВАЖНО: Читаем значение из КОЛОНКИ-ССЫЛКИ 'RouteLink'. Оно должно быть числовым ID.
-        g_currentRouteActualRefId = record.RouteLink || null;
-        console.log(`Current g_currentRouteActualRefId (ID of route in Table1, read from Table7.RouteLink) set to: ${g_currentRouteActualRefId}`);
+        // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        const refValue = record.RouteLink;
+        let extractedRouteId = null;
+
+        if (typeof refValue === 'number') {
+            extractedRouteId = refValue; // Если это уже число, используем его
+        } else if (Array.isArray(refValue) && refValue.length > 0 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
+            // Похоже на формат Grist "L<table_numeric_id>;<row_id>" или ["L<table_numeric_id>", row_id]
+            // Пример: refValue = ["L1", 2] -> ID = 2
+            // Пример: refValue = "L1;2" (менее вероятно из JS API, но проверим)
+            if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[1] === 'number') {
+                 extractedRouteId = refValue[1];
+            } else if (typeof refValue === 'string') {
+                const parts = refValue.split(';');
+                if (parts.length === 2 && !isNaN(parseInt(parts[1], 10))) {
+                    extractedRouteId = parseInt(parts[1], 10);
+                }
+            }
+        }
+        // Можно добавить другие проверки, если Grist возвращает ID ссылки в другом формате
+
+        g_currentRouteActualRefId = extractedRouteId;
+        console.log(`Current g_currentRouteActualRefId (ID of route in Table1, from Table7.RouteLink) set to: ${g_currentRouteActualRefId} (Type: ${typeof g_currentRouteActualRefId})`);
 
         const lat = record.C; const lng = record.D;
         if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
