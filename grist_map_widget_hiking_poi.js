@@ -1,4 +1,4 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #190 - Улучшенная обработка Ref ID) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #196 - Полная, с детальным логгингом checkLeafletApi) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
@@ -119,7 +119,10 @@ function handleGristRecordUpdate(record, mappings) {
 
 function loadExistingPOIs(records, mappings) {
     console.log("DEBUG: loadExistingPOIs: Called for Table7. Received records count:", records ? records.length : 0);
-    if (!map || !poiMarkersLayer) { return; }
+    if (!map || !poiMarkersLayer) {
+        console.warn("DEBUG: loadExistingPOIs: Map or POI layer not ready.");
+        return;
+    }
     poiMarkersLayer.clearLayers();
     console.log("DEBUG: loadExistingPOIs: Previous POI markers cleared.");
 
@@ -175,7 +178,6 @@ async function handleMapClick(e) {
     }
 
     // ВАЖНО: g_currentRouteActualRefId УЖЕ ДОЛЖЕН БЫТЬ ПРАВИЛЬНЫМ ID (числом или вашим UUID-строкой)
-    // Конвертация в Number(g_currentRouteActualRefId) может быть не нужна, если UUID - строка.
     // Grist должен сам правильно обработать значение для колонки типа Reference.
     const routeRefValueForGrist = g_currentRouteActualRefId;
 
