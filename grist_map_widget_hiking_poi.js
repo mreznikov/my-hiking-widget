@@ -110,28 +110,40 @@ function loadExistingPOIs(records, mappings) {
     } else { console.log("No POIs to load from Grist."); }
 }
 
+/**
+ * Обрабатывает клик, ставит маркер и добавляет запись в Grist (B,C,D,G),
+ * колонка A (Название Маршрута) будет заполнена формулой Grist.
+ * @param {L.LeafletMouseEvent} e - Событие клика Leaflet
+ */
 async function handleMapClick(e) {
     if (!e.latlng) return;
-    const lat = e.latlng.lat; const lng = e.latlng.lng;
+
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
     const positionLeaflet = e.latlng;
     const poiType = "Точка интереса";
     const description = ""; // Пустое описание
 
-    // УБРАЛИ: const routeNameForNewPoi = g_currentRouteName || "Маршрут не определен";
+    // Убираем routeNameForNewPoi из текста Popup, т.к. оно будет заполнено Grist
     const popupText = `<b>Тип:</b> ${poiType}<br><small>Координаты: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>`;
     console.log("Map clicked at:", positionLeaflet, "Creating POI:", poiType, "Desc: (empty)");
 
+    // Визуальный маркер (будет обновлен/перерисован из Grist после добавления записи)
     L.marker(positionLeaflet).addTo(poiMarkersLayer || map).bindPopup(popupText).openPopup();
 
     let tableIdToUse = currentTableId;
     if (!tableIdToUse && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
         try {
+            console.log("DEBUG: tableId not from options, trying grist.selectedTable.getTableId()...");
             const idFromMethod = await grist.selectedTable.getTableId();
             if (idFromMethod && typeof idFromMethod === 'string') {
-                tableIdToUse = idFromMethod; currentTableId = idFromMethod;
+                tableIdToUse = idFromMethod;
+                currentTableId = idFromMethod; // Сохраняем для последующих вызовов
                 console.log(`DEBUG: Table ID for new POI set to: ${tableIdToUse} via getTableId().`);
+            } else {
+                console.warn("DEBUG: getTableId() returned invalid value:", idFromMethod);
             }
-        } catch(err) { console.error("Error getting tableId in handleMapClick:", err); }
+        } catch(err) { console.error("Error calling grist.selectedTable.getTableId():", err); }
     }
 
     if (tableIdToUse && typeof tableIdToUse === 'string') {
@@ -143,18 +155,25 @@ async function handleMapClick(e) {
             'G': description    // Пустое описание
         };
         const userActions = [ ['AddRecord', tableIdToUse, null, newRecord] ];
+
         console.log(`Attempting to add record to Grist table ID: ${tableIdToUse}`, JSON.stringify(newRecord));
         try {
-            if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi not available."); }
+            if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi or applyUserActions not available."); }
+            console.log("Sending to Grist (applyUserActions):", JSON.stringify(userActions));
             await grist.docApi.applyUserActions(userActions);
             console.log(`New POI record add action sent successfully to Grist.`);
+            // После этого Grist должен:
+            // 1. Создать запись с B, C, D, G.
+            // 2. Заполнить вашу КОЛОНКУ-ССЫЛКУ (например, RouteRef) ID выбранного маршрута из Table1.
+            // 3. Вычислить КОЛОНКУ A по ее формуле (например, $RouteRef.A).
+            // 4. Прислать событие onRecords, которое вызовет loadExistingPOIs и обновит карту.
         } catch (error) {
             console.error(`Failed to add record to Grist:`, error);
-            alert(`Ошибка добавления POI в Grist: ${error.message}`);
+            alert(`Ошибка добавления POI в Grist: ${error.message}\nУбедитесь, что виджет имеет доступ 'full' и вы НЕ в 'Builder'.`);
         }
     } else {
-        console.error("Cannot add record: Table ID is unknown or invalid.", tableIdToUse);
-        alert("Не удалось добавить POI: ID таблицы неизвестен.");
+        console.error("Cannot add record: Table ID is unknown or invalid. Current value:", tableIdToUse);
+        alert("Не удалось добавить POI: ID таблицы неизвестен. Проверьте настройки виджета и консоль.");
     }
 }
 
