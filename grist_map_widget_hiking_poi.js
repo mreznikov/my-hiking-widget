@@ -107,4 +107,103 @@ function loadExistingPOIs(records, mappings) {
         records.forEach(record => {
             const type = record.B;
             const lat = record.C;
-            const lng = record.D
+            const lng = record.D;
+            const description = record.G || "";
+
+            let popupText = `<b>Тип:</b> ${type || "N/A"}`;
+            if (description) { popupText += `<br><b>Описание:</b> ${description}`; }
+            popupText += `<br><small>ID: ${record.id}</small>`;
+
+            if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
+                L.marker(L.latLng(lat, lng), { gristRecordId: record.id }) // Можно добавить ID для связки
+                    .addTo(poiMarkersLayer)
+                    .bindPopup(popupText);
+                addedCount++;
+            }
+        });
+        console.log(`Loaded ${addedCount} POIs onto the map from Grist records.`);
+    } else { console.log("No POIs to load from Grist."); }
+}
+
+async function handleMapClick(e) {
+    if (!e.latlng) return;
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+    const positionLeaflet = e.latlng;
+    const poiType = "Точка интереса";
+    const description = ""; // Пустое описание согласно запросу
+
+    const popupText = `<b>Тип:</b> ${poiType}<br><small>Координаты: ${lat.toFixed(4)}, ${lng.toFixed(4)}</small>`;
+    console.log("Map clicked at:", positionLeaflet, "Creating POI:", poiType, "Desc: (empty)");
+
+    // Визуальный маркер добавляется через loadExistingPOIs после обновления Grist
+
+    let tableIdToUse = currentTableId;
+    if (!tableIdToUse && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
+        try {
+            console.log("DEBUG: tableId not from options, trying grist.selectedTable.getTableId()...");
+            const idFromMethod = await grist.selectedTable.getTableId();
+            if (idFromMethod && typeof idFromMethod === 'string') {
+                tableIdToUse = idFromMethod;
+                currentTableId = idFromMethod; // Сохраняем для последующих вызовов
+                console.log(`DEBUG: Table ID for new POI set to: ${tableIdToUse} via getTableId().`);
+            } else {
+                console.warn("DEBUG: getTableId() returned invalid value:", idFromMethod);
+            }
+        } catch(err) { console.error("Error calling grist.selectedTable.getTableId():", err); }
+    }
+
+    if (tableIdToUse && typeof tableIdToUse === 'string') {
+        const newRecord = {
+            'B': poiType,       // Тип объекта
+            'C': lat,           // Широта
+            'D': lng,           // Долгота
+            'G': description    // Пустое описание
+        };
+        const userActions = [ ['AddRecord', tableIdToUse, null, newRecord] ];
+        console.log(`Attempting to add record to Grist table ID: ${tableIdToUse}`, JSON.stringify(newRecord));
+        try {
+            if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi or applyUserActions not available."); }
+            console.log("Sending to Grist (applyUserActions):", JSON.stringify(userActions));
+            await grist.docApi.applyUserActions(userActions);
+            console.log(`New POI record add action sent successfully to Grist.`);
+            // После этого Grist должен прислать событие onRecords, которое вызовет loadExistingPOIs
+            // и новый маркер отрисуется уже на основе данных из таблицы.
+        } catch (error) {
+            console.error(`Failed to add record to Grist:`, error);
+            alert(`Ошибка добавления POI в Grist: ${error.message}\nУбедитесь, что виджет имеет доступ 'full' и НЕ запущен в "Builder".`);
+        }
+    } else {
+        console.error("Cannot add record: Table ID is unknown or invalid. Current value:", tableIdToUse);
+        alert("Не удалось добавить POI: ID таблицы неизвестен. Проверьте настройки виджета и консоль.");
+    }
+}
+
+function updateMarkerOnMap(position, label) { // Эта функция теперь используется только handleGristRecordUpdate
+     if (!map || !poiMarkersLayer) return;
+     // Для простоты, при обновлении через onRecord мы не ищем старый маркер, а просто перерисовываем все.
+     // Если нужна подсветка конкретного маркера, логику нужно усложнять.
+     // map.flyTo(L.latLng(position), MARKER_ZOOM_LEVEL);
+     // console.log(`updateMarkerOnMap called to pan to ${position}, label: ${label}`);
+     // Логика этой функции будет пересмотрена в loadExistingPOIs
+}
+
+
+// === БЛОК РУЧНОЙ ИНИЦИАЛИЗАЦИИ LEAFLET ===
+function checkLeafletApi() {
+    console.log("DEBUG: === ENTERING checkLeafletApi ===");
+    if (typeof L === 'object' && L !== null && typeof L.map === 'function') {
+        console.log("DEBUG: Leaflet API check PASSED.");
+        initMap();
+    } else {
+        console.warn("DEBUG: Leaflet API check FAILED. Retrying shortly...");
+        setTimeout(checkLeafletApi, 250);
+    }
+    console.log("DEBUG: === EXITING checkLeafletApi (may retry via timeout) ===");
+}
+// === ТОЧКА ВХОДА (ПРЯМОЙ ВЫЗОВ ПРОВЕРКИ API) ===
+console.log("DEBUG: Calling checkLeafletApi directly now for Israel Hiking Map POI widget.");
+checkLeafletApi();
+
+console.log("grist_map_widget_hiking_poi.js executed.");
+// === КОНЕЦ СКРИПТА ===
