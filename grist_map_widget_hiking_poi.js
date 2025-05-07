@@ -49,7 +49,7 @@ function setupGrist() {
             { name: "D", type: 'Numeric', title: 'Долгота' },
             { name: "G", type: 'Text', optional: true, title: 'Описание POI' },
             // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
-            { name: "RouteLink_actual_ID", type: 'Any', title: 'Ссылка на Маршрут (ID строки из Table1)' }
+            { name: "RouteLink", type: 'Any', title: 'Ссылка на Маршрут (ID строки из Table1)' }
         ]
     });
     grist.onOptions(handleOptionsUpdate);
@@ -86,10 +86,10 @@ function handleGristRecordUpdate(record, mappings) {
 
     if (record && typeof record.id !== 'undefined') {
         // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
-        const refValue = record.RouteLink_actual_ID;
+        const refValue = record.RouteLink;
 
-        console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink_actual_ID (refValue):", refValue);
-        console.log(`DEBUG: handleGristRecordUpdate: Type of record.RouteLink_actual_ID (refValue): ${typeof refValue}`);
+        console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink (refValue):", refValue);
+        console.log(`DEBUG: handleGristRecordUpdate: Type of record.RouteLink (refValue): ${typeof refValue}`);
 
         let extractedRouteId = null;
 
@@ -106,7 +106,7 @@ function handleGristRecordUpdate(record, mappings) {
             extractedRouteId = refValue[1]; // Это может быть число или ваш текстовый UUID
             console.log("DEBUG: handleGristRecordUpdate: refValue is Grist link array, extracted ID/UUID:", extractedRouteId);
         } else {
-            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink_actual_ID is in an unexpected format or null/empty.");
+            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink is in an unexpected format or null/empty.");
         }
 
         g_currentRouteActualRefId = extractedRouteId;
@@ -184,7 +184,7 @@ async function handleMapClick(e) {
     if (tableIdToUse && typeof tableIdToUse === 'string') {
         // ВАЖНО: Замените 'RouteLink_actual_ID' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const newRecord = {
-            'RouteLink_actual_ID': routeRefValueForGrist,
+            'RouteLink': routeRefValueForGrist,
             'B': poiType,
             'C': lat,
             'D': lng,
