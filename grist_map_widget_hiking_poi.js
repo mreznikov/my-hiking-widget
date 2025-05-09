@@ -1,4 +1,4 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #225b - Полная, двусторонняя синхронизация, улучшен setCursorPos) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #226 - Полная, двусторонняя синхронизация, улучшен setCursorPos) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
@@ -58,54 +58,55 @@ function setupGrist() {
 function handleOptionsUpdate(options, interaction) {
     console.log("DEBUG: handleOptionsUpdate: Grist: Received options update:", options);
     let foundTableId = null;
-    if (options && options.tableId) { foundTableId = options.tableId; }
-    else if (interaction && interaction.tableId) { foundTableId = interaction.tableId; }
-    else if (options && options.tableRef) { foundTableId = String(options.tableRef); }
+    if (options && options.tableId) {
+        foundTableId = options.tableId;
+        console.log("DEBUG: handleOptionsUpdate: tableId found in options:", foundTableId);
+    } else if (interaction && interaction.tableId) {
+        foundTableId = interaction.tableId;
+        console.log("DEBUG: handleOptionsUpdate: tableId found in interaction:", foundTableId);
+    } else if (options && options.tableRef) {
+        foundTableId = String(options.tableRef);
+        console.log("DEBUG: handleOptionsUpdate: tableId found in options.tableRef:", foundTableId);
+    }
 
     if (foundTableId) {
          currentTableId = String(foundTableId);
          console.log(`DEBUG: handleOptionsUpdate: Current Table ID (Table7) set to: ${currentTableId}`);
     } else {
-        console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 in options/interaction. Will rely on getTableId() at click time.");
-        currentTableId = null;
+        console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 directly in options/interaction.");
+        // Попытка получить tableId асинхронно, если еще не установлен и если selectedTable доступно
+        if (currentTableId === null && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
+            grist.selectedTable.getTableId().then(id => {
+                if (id && typeof id === 'string') {
+                    currentTableId = id;
+                    console.log(`DEBUG: handleOptionsUpdate: (async) Current Table ID (Table7) set to: ${currentTableId}`);
+                }
+            }).catch(err => console.error("DEBUG: handleOptionsUpdate: (async) Error getting tableId:", err));
+        }
     }
 }
 
-// ИСПРАВЛЕННАЯ ВЕРСИЯ ИЗ #208 для парсинга объекта Reference {tableId, rowId}
+// Версия из #219 (исправленный парсинг record.RouteLink)
 function handleGristRecordUpdate(record, mappings) {
     console.log("DEBUG: handleGristRecordUpdate: Raw 'record' object received from Grist:", JSON.parse(JSON.stringify(record || {})));
-
     if (!map) { console.error("DEBUG: handleGristRecordUpdate: Map not initialized yet."); return; }
     const oldSelectedRecordId = currentRecordId;
     currentRecordId = record ? record.id : null;
 
     if (record && typeof record.id !== 'undefined' && record.id !== null) {
-        // ВАЖНО: Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        // Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const refValue = record.RouteLink;
-
         console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink (refValue):", refValue);
         console.log(`DEBUG: handleGristRecordUpdate: Type of record.RouteLink (refValue): ${typeof refValue}`);
-
         let extractedRouteId = null;
 
-        if (typeof refValue === 'number') {
-            extractedRouteId = refValue;
-            console.log("DEBUG: handleGristRecordUpdate: refValue is a number.");
-        } else if (typeof refValue === 'object' && refValue !== null && refValue.hasOwnProperty('rowId')) {
-            extractedRouteId = refValue.rowId;
-            console.log("DEBUG: handleGristRecordUpdate: refValue is an object, extracted rowId:", extractedRouteId);
-        } else if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
-            extractedRouteId = refValue[1];
-            console.log("DEBUG: handleGristRecordUpdate: refValue is Grist link array, extracted ID/UUID:", extractedRouteId);
-        } else if (typeof refValue === 'string' && refValue.trim() !== "") {
-            extractedRouteId = refValue;
-            console.log("DEBUG: handleGristRecordUpdate: refValue is a string, using it as is (e.g., for UUID).");
-        } else {
-            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink is in an unexpected format or null/empty.");
-        }
+        if (typeof refValue === 'number') { extractedRouteId = refValue; console.log("DEBUG: refValue is a number."); }
+        else if (typeof refValue === 'object' && refValue !== null && refValue.hasOwnProperty('rowId')) { extractedRouteId = refValue.rowId; console.log("DEBUG: refValue is an object, extracted rowId:", extractedRouteId); }
+        else if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') { extractedRouteId = refValue[1]; console.log("DEBUG: refValue is Grist link array, extracted ID/UUID:", extractedRouteId); }
+        else if (typeof refValue === 'string' && refValue.trim() !== "") { extractedRouteId = refValue; console.log("DEBUG: refValue is a string, using it as is."); }
+        else { console.warn("DEBUG: refValue for RouteLink is in an unexpected format or null/empty."); }
 
         g_currentRouteActualRefId = extractedRouteId;
-
         if (g_currentRouteActualRefId !== null && typeof g_currentRouteActualRefId !== 'undefined' && !isNaN(Number(g_currentRouteActualRefId))) {
              g_currentRouteActualRefId = Number(g_currentRouteActualRefId);
         } else if (typeof g_currentRouteActualRefId === 'string' && g_currentRouteActualRefId.trim() === "") {
@@ -116,7 +117,6 @@ function handleGristRecordUpdate(record, mappings) {
         const lat = record.C; const lng = record.D;
         if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
             map.flyTo(L.latLng(lat, lng), MARKER_ZOOM_LEVEL);
-            // Открываем Popup для выбранного маркера
             if (poiMarkersLayer) {
                 poiMarkersLayer.eachLayer(layer => {
                     if (layer.options && layer.options.gristRecordId === record.id) {
@@ -127,7 +127,6 @@ function handleGristRecordUpdate(record, mappings) {
             }
         }
     } else {
-        // Не сбрасываем g_currentRouteActualRefId, если record пуст
         console.log("DEBUG: handleGristRecordUpdate: No valid POI record selected. g_currentRouteActualRefId remains:", g_currentRouteActualRefId);
     }
 }
@@ -158,7 +157,6 @@ function loadExistingPOIs(records, mappings) {
                     .addTo(poiMarkersLayer).bindPopup(popupText);
                 addedCount++;
 
-                // Обработчик клика по маркеру на карте
                 marker.on('click', async function(e) {
                     const clickedMarker = e.target;
                     const gristId = clickedMarker.options.gristRecordId;
@@ -168,7 +166,7 @@ function loadExistingPOIs(records, mappings) {
                     let tableIdToSelectIn = currentTableId;
                     if (!tableIdToSelectIn && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
                         try {
-                            console.log("DEBUG: Marker click: currentTableId not set, attempting grist.selectedTable.getTableId()...");
+                            console.log("DEBUG: Marker click: currentTableId not set, trying grist.selectedTable.getTableId()...");
                             tableIdToSelectIn = await grist.selectedTable.getTableId();
                             if (tableIdToSelectIn) { currentTableId = tableIdToSelectIn; console.log(`DEBUG: Marker click: Table ID for selection set to: ${tableIdToSelectIn}`); }
                             else { console.warn("DEBUG: Marker click: grist.selectedTable.getTableId() returned invalid value."); }
@@ -180,14 +178,16 @@ function loadExistingPOIs(records, mappings) {
                     console.log(`DEBUG: Marker click: Attempting to set cursor to rowId: ${gristId} in tableId: ${tableIdToSelectIn}`);
                     if (typeof grist.setCursorPos === 'function') {
                         grist.setCursorPos({ rowId: gristId, tableId: tableIdToSelectIn })
-                            .then(() => console.log(`DEBUG: Marker click: Grist cursor set via grist.setCursorPos.`))
+                            .then(() => console.log(`DEBUG: Marker click: Grist cursor POSSIBLY set to rowId: ${gristId} in table ${tableIdToSelectIn} via grist.setCursorPos.`))
                             .catch(err => {
                                 console.error("DEBUG: Marker click: Error via grist.setCursorPos:", err);
-                                if (grist.selectedTable?.setCursorPos) {
+                                if (grist.selectedTable?.setCursorPos) { // Проверяем selectedTable перед вызовом метода
                                     console.warn("DEBUG: Marker click: Fallback to grist.selectedTable.setCursorPos...");
                                     grist.selectedTable.setCursorPos({ rowId: gristId })
                                         .then(() => console.log(`DEBUG: Marker click: Grist cursor set via grist.selectedTable (fallback).`))
                                         .catch(errFallback => console.error("DEBUG: Marker click: Fallback grist.selectedTable.setCursorPos also failed:", errFallback));
+                                } else {
+                                    console.error("DEBUG: Marker click: grist.selectedTable or its setCursorPos is not available for fallback.");
                                 }
                             });
                     } else { console.error("DEBUG: Marker click: grist.setCursorPos function is not available."); }
@@ -228,7 +228,6 @@ async function handleMapClick(e) {
     const lat = e.latlng.lat; const lng = e.latlng.lng;
     const positionLeaflet = e.latlng;
     const poiType = "Точка интереса"; const description = "";
-
     console.log("DEBUG: handleMapClick: Map area clicked. Current RouteRef ID to use:", g_currentRouteActualRefId, `(Type: ${typeof g_currentRouteActualRefId})`);
 
     let tableIdToUse = currentTableId;
@@ -248,10 +247,7 @@ async function handleMapClick(e) {
         // ВАЖНО: Замените 'RouteLink' на РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const newRecord = {
             'RouteLink': routeRefValueForGrist,
-            'B': poiType,
-            'C': lat,
-            'D': lng,
-            'G': description
+            'B': poiType, 'C': lat, 'D': lng, 'G': description
         };
         const userActions = [ ['AddRecord', tableIdToUse, null, newRecord] ];
         console.log(`DEBUG: handleMapClick: Attempting to add record to Grist table ${tableIdToUse}:`, JSON.stringify(newRecord));
