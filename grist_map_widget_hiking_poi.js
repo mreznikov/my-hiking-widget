@@ -151,6 +151,14 @@ function handleGristRecordUpdate(record, mappings) {
  * Загружает существующие POI, делает их перетаскиваемыми, обновляет Grist при перетаскивании,
  * и устанавливает обработчик клика на маркер для выбора строки в Grist.
  */
+
+// ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ в коде из #222
+
+/**
+ * Загружает существующие POI, делает их перетаскиваемыми, обновляет Grist при перетаскивании,
+ * и устанавливает обработчик клика на маркер для выбора строки в Grist.
+ * ВЕРСИЯ #223 - Улучшенная попытка setCursorPos
+ */
 function loadExistingPOIs(records, mappings) {
     console.log("DEBUG: loadExistingPOIs: Called. Received records count:", records ? records.length : 0);
     if (!map || !poiMarkersLayer) {
@@ -176,73 +184,92 @@ function loadExistingPOIs(records, mappings) {
             if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
                 const marker = L.marker(L.latLng(lat, lng), {
                     draggable: true,
-                    gristRecordId: record.id // Сохраняем Grist ID
+                    gristRecordId: record.id
                 })
                 .addTo(poiMarkersLayer)
                 .bindPopup(popupText);
                 addedCount++;
 
-                // Обработчик клика по маркеру на карте
+                // --- ИЗМЕНЕННЫЙ Обработчик клика по маркеру на карте ---
                 marker.on('click', function(e) {
                     const clickedMarker = e.target;
                     const gristId = clickedMarker.options.gristRecordId;
                     console.log(`DEBUG: Map Marker Clicked. Grist Record ID: ${gristId}`);
+
                     if (gristId !== null && typeof gristId !== 'undefined') {
                         if (grist.selectedTable && typeof grist.selectedTable.setCursorPos === 'function') {
+                            console.log("DEBUG: Attempting to use grist.selectedTable.setCursorPos...");
                             grist.selectedTable.setCursorPos({ rowId: gristId })
-                                .then(() => console.log(`DEBUG: Grist cursor set to rowId: ${gristId} by marker click.`))
-                                .catch(err => console.error("DEBUG: Error setting Grist cursor:", err));
-                        } else { console.warn("DEBUG: grist.selectedTable.setCursorPos is not available."); }
+                                .then(() => {
+                                    console.log(`DEBUG: Grist cursor set to rowId: ${gristId} successfully via grist.selectedTable.`);
+                                })
+                                .catch(err => {
+                                    console.error("DEBUG: Error setting Grist cursor via grist.selectedTable.setCursorPos:", err);
+                                    console.warn("DEBUG: grist.selectedTable.setCursorPos failed. Trying grist.setCursorPos as fallback.");
+                                    if (typeof grist.setCursorPos === 'function' && currentTableId) {
+                                        grist.setCursorPos({ rowId: gristId, tableId: currentTableId })
+                                            .then(() => console.log(`DEBUG: Grist cursor set to rowId: ${gristId} in table ${currentTableId} via grist.setCursorPos.`))
+                                            .catch(errFallback => console.error("DEBUG: Error setting Grist cursor via grist.setCursorPos:", errFallback));
+                                    } else {
+                                        console.error("DEBUG: grist.setCursorPos is not available or currentTableId is missing for fallback.");
+                                    }
+                                });
+                        } else {
+                            console.warn("DEBUG: grist.selectedTable or grist.selectedTable.setCursorPos is not available. Trying grist.setCursorPos directly.");
+                            if (typeof grist.setCursorPos === 'function' && currentTableId) {
+                                console.log(`DEBUG: Trying grist.setCursorPos directly for tableId: ${currentTableId} and rowId: ${gristId}`);
+                                grist.setCursorPos({ rowId: gristId, tableId: currentTableId })
+                                    .then(() => console.log(`DEBUG: Grist cursor set to rowId: ${gristId} in table ${currentTableId} via grist.setCursorPos.`))
+                                    .catch(errFallback => console.error("DEBUG: Error setting Grist cursor via grist.setCursorPos directly:", errFallback));
+                            } else {
+                                console.error("DEBUG: grist.setCursorPos is not available or currentTableId is missing.");
+                            }
+                        }
                     }
-                    // L.DomEvent.stopPropagation(e); // Раскомментируйте, если клик по маркеру вызывает также handleMapClick
+                    // L.DomEvent.stopPropagation(e); // Раскомментируйте, если клик по маркеру вызывает также handleMapClick для добавления новой точки
                 });
 
-                // Обработчик события dragend
+
                 marker.on('dragend', async function(event) {
                     const draggedMarker = event.target;
                     const newPosition = draggedMarker.getLatLng();
                     const recordIdToUpdate = draggedMarker.options.gristRecordId;
-                    const originalPosition = draggedMarker.options.originalPosition; // Для возможного отката
+                    const originalPosition = draggedMarker.options.originalPosition;
 
                     console.log(`DEBUG: Marker Dragged: ID=${recordIdToUpdate}, NewPos=${newPosition.lat},${newPosition.lng}`);
 
-                    let tableIdToUpdate = currentTableId; // Должен быть ID Table7
+                    let tableIdToUpdate = currentTableId;
                     if (!tableIdToUpdate && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
                         try {
                             tableIdToUpdate = await grist.selectedTable.getTableId();
-                            if (tableIdToUpdate) currentTableId = tableIdToUpdate; // Обновляем, если получили
+                            if (tableIdToUpdate) currentTableId = tableIdToUpdate;
                         } catch (err) {
                             console.error("DEBUG: Marker Drag: Error getting Table7 ID:", err);
-                            alert("Ошибка: Не удалось определить таблицу для обновления координат после перетаскивания.");
-                            if (originalPosition) draggedMarker.setLatLng(originalPosition); // Откат
+                            alert("Ошибка: Не удалось определить таблицу для обновления координат.");
+                            if (originalPosition) draggedMarker.setLatLng(originalPosition);
                             return;
                         }
                     }
 
                     if (recordIdToUpdate && tableIdToUpdate && typeof tableIdToUpdate === 'string') {
-                        const updatedData = {
-                            'C': newPosition.lat, // Обновляем Широту
-                            'D': newPosition.lng  // Обновляем Долготу
-                        };
+                        const updatedData = { 'C': newPosition.lat, 'D': newPosition.lng };
                         const userActions = [['UpdateRecord', tableIdToUpdate, recordIdToUpdate, updatedData]];
                         try {
                             console.log(`DEBUG: Marker Drag: Updating Grist record ${recordIdToUpdate} in table ${tableIdToUpdate}:`, updatedData);
                             if (!grist.docApi?.applyUserActions) { throw new Error("Grist docApi not available for drag update."); }
                             await grist.docApi.applyUserActions(userActions);
                             console.log(`DEBUG: Marker Drag: Grist record ${recordIdToUpdate} updated successfully.`);
-                            // Обновляем "originalPosition" в маркере после успешного сохранения
                             draggedMarker.options.originalPosition = newPosition;
                         } catch (error) {
                             console.error(`DEBUG: Marker Drag: Failed to update Grist record ${recordIdToUpdate}:`, error);
                             alert(`Ошибка обновления координат точки: ${error.message}`);
-                            if (originalPosition) draggedMarker.setLatLng(originalPosition); // Откат
+                            if (originalPosition) draggedMarker.setLatLng(originalPosition);
                         }
                     } else {
                         console.error("DEBUG: Marker Drag: Cannot update - recordId or tableId is missing.", { recordIdToUpdate, tableIdToUpdate });
                         if (originalPosition) draggedMarker.setLatLng(originalPosition);
                     }
                 });
-                // Сохраняем начальную позицию для возможного отката при ошибке обновления
                 marker.options.originalPosition = L.latLng(lat, lng);
             }
         });
