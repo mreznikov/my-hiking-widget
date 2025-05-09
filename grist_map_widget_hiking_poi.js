@@ -81,13 +81,15 @@ function handleOptionsUpdate(options, interaction) {
 }
 
 // ИСПРАВЛЕННАЯ ВЕРСИЯ ИЗ #208 для парсинга объекта Reference {tableId, rowId}
+
+// === ИЗМЕНЕННАЯ handleGristRecordUpdate ===
 function handleGristRecordUpdate(record, mappings) {
     console.log("DEBUG: handleGristRecordUpdate: Raw 'record' object received from Grist:", JSON.parse(JSON.stringify(record || {})));
 
     if (!map) { console.error("DEBUG: handleGristRecordUpdate: Map not initialized yet."); return; }
     currentRecordId = record ? record.id : null; // ID текущей выбранной строки в Table7
 
-    if (record && typeof record.id !== 'undefined') {
+    if (record && typeof record.id !== 'undefined' && record.id !== null) { // Добавили record.id !== null
         // ВАЖНО: Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const refValue = record.RouteLink;
 
@@ -96,53 +98,46 @@ function handleGristRecordUpdate(record, mappings) {
 
         let extractedRouteId = null;
 
-        if (typeof refValue === 'number') { // Если это уже число (стандартный ID Grist)
+        if (typeof refValue === 'number') {
             extractedRouteId = refValue;
             console.log("DEBUG: handleGristRecordUpdate: refValue is a number.");
         } else if (typeof refValue === 'object' && refValue !== null && refValue.hasOwnProperty('rowId')) {
-            // Если это объект вида {tableId: 'Table1', rowId: 2} (или ваш UUID в rowId)
             extractedRouteId = refValue.rowId;
             console.log("DEBUG: handleGristRecordUpdate: refValue is an object, extracted rowId:", extractedRouteId);
         } else if (Array.isArray(refValue) && refValue.length === 2 && typeof refValue[0] === 'string' && refValue[0].toUpperCase() === 'L') {
-            // Формат Grist для ссылок: ["L<table_pk_или_id>", row_id_или_uuid]
-            extractedRouteId = refValue[1]; // Это может быть число или ваш текстовый UUID
+            extractedRouteId = refValue[1];
             console.log("DEBUG: handleGristRecordUpdate: refValue is Grist link array, extracted ID/UUID:", extractedRouteId);
         } else if (typeof refValue === 'string' && refValue.trim() !== "") {
-            // Если это строка, это может быть ваш текстовый UUID или число в строке.
             extractedRouteId = refValue;
             console.log("DEBUG: handleGristRecordUpdate: refValue is a string, using it as is (e.g., for UUID).");
         } else {
-            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink is in an unexpected format or null/empty.");
+            console.warn("DEBUG: handleGristRecordUpdate: refValue for RouteLink is in an unexpected format or null/empty. g_currentRouteActualRefId will not be updated from this record.");
+            // НЕ сбрасываем g_currentRouteActualRefId в null здесь, если refValue невалидный,
+            // чтобы сохранить предыдущее корректное значение, если оно было.
+            // extractedRouteId останется null, и g_currentRouteActualRefId не изменится.
         }
 
-        g_currentRouteActualRefId = extractedRouteId;
-
-        // Если ваш ID маршрута (например, UUID) является числом или строкой, представляющей число,
-        // и Grist ожидает число для связи по Ref-колонке (что типично для стандартных Grist ID).
-        if (g_currentRouteActualRefId !== null && typeof g_currentRouteActualRefId !== 'undefined' && !isNaN(Number(g_currentRouteActualRefId))) {
-             g_currentRouteActualRefId = Number(g_currentRouteActualRefId);
+        // Обновляем g_currentRouteActualRefId только если извлекли валидный ID
+        if (extractedRouteId !== null && typeof extractedRouteId !== 'undefined') {
+            g_currentRouteActualRefId = extractedRouteId;
+            // Приводим к числу, если это числовая строка и Grist ожидает число для Ref
+            if (g_currentRouteActualRefId !== null && !isNaN(Number(g_currentRouteActualRefId))) {
+                 g_currentRouteActualRefId = Number(g_currentRouteActualRefId);
+            }
+            console.log(`DEBUG: handleGristRecordUpdate: Global g_currentRouteActualRefId updated to: ${g_currentRouteActualRefId} (Type: ${typeof g_currentRouteActualRefId})`);
+        } else {
+            console.log("DEBUG: handleGristRecordUpdate: No valid extractedRouteId, g_currentRouteActualRefId remains:", g_currentRouteActualRefId);
         }
-        // Если ваш ID маршрута - это нечисловая строка (например, сложный UUID) и Grist
-        // правильно обрабатывает такие строки для Ref-колонок, то предыдущий блок if не нужен,
-        // и g_currentRouteActualRefId должен оставаться строкой.
 
-        console.log(`DEBUG: handleGristRecordUpdate: Global g_currentRouteActualRefId set to: ${g_currentRouteActualRefId} (Type: ${typeof g_currentRouteActualRefId})`);
 
         const lat = record.C; const lng = record.D;
         if (typeof lat === 'number' && typeof lng === 'number' && !isNaN(lat) && !isNaN(lng)) {
             map.flyTo(L.latLng(lat, lng), MARKER_ZOOM_LEVEL);
-            // Открытие Popup для выбранного маркера
-            if (poiMarkersLayer) {
-                poiMarkersLayer.eachLayer(layer => {
-                    if (layer.options && layer.options.gristRecordId === record.id) {
-                        layer.openPopup();
-                    }
-                });
-            }
         }
     } else {
-        g_currentRouteActualRefId = null;
-        console.log("DEBUG: handleGristRecordUpdate: No POI selected or record is invalid, g_currentRouteActualRefId reset.");
+        // НЕ сбрасываем g_currentRouteActualRefId в null, если пришел пустой record.
+        // Это позволит сохранить контекст последнего выбранного маршрута.
+        console.log("DEBUG: handleGristRecordUpdate: No valid POI record selected or record is invalid. g_currentRouteActualRefId NOT reset, remains:", g_currentRouteActualRefId);
     }
 }
 
