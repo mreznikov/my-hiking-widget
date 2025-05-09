@@ -1,4 +1,4 @@
-// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #226 - Полная, двусторонняя синхронизация, улучшен setCursorPos) ===
+// === ПОЛНЫЙ КОД JAVASCRIPT ВИДЖЕТА (Версия #226 - Полная, с grist.requestFocus()) ===
 
 // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ===
 let map;
@@ -74,7 +74,6 @@ function handleOptionsUpdate(options, interaction) {
          console.log(`DEBUG: handleOptionsUpdate: Current Table ID (Table7) set to: ${currentTableId}`);
     } else {
         console.warn("DEBUG: handleOptionsUpdate: Could not find tableId for Table7 directly in options/interaction.");
-        // Попытка получить tableId асинхронно, если еще не установлен и если selectedTable доступно
         if (currentTableId === null && grist.selectedTable && typeof grist.selectedTable.getTableId === 'function') {
             grist.selectedTable.getTableId().then(id => {
                 if (id && typeof id === 'string') {
@@ -86,7 +85,7 @@ function handleOptionsUpdate(options, interaction) {
     }
 }
 
-// Версия из #219 (исправленный парсинг record.RouteLink)
+// Версия из #225 (исправленный парсинг record.RouteLink)
 function handleGristRecordUpdate(record, mappings) {
     console.log("DEBUG: handleGristRecordUpdate: Raw 'record' object received from Grist:", JSON.parse(JSON.stringify(record || {})));
     if (!map) { console.error("DEBUG: handleGristRecordUpdate: Map not initialized yet."); return; }
@@ -94,7 +93,7 @@ function handleGristRecordUpdate(record, mappings) {
     currentRecordId = record ? record.id : null;
 
     if (record && typeof record.id !== 'undefined' && record.id !== null) {
-        // Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
+        // ВАЖНО: Убедитесь, что 'RouteLink' - это РЕАЛЬНЫЙ ID вашей колонки-ссылки в Table7!
         const refValue = record.RouteLink;
         console.log("DEBUG: handleGristRecordUpdate: Value of record.RouteLink (refValue):", refValue);
         console.log(`DEBUG: handleGristRecordUpdate: Type of record.RouteLink (refValue): ${typeof refValue}`);
@@ -132,9 +131,9 @@ function handleGristRecordUpdate(record, mappings) {
 }
 
 /**
- * Загружает POI, делает их перетаскиваемыми, обновляет Grist при перетаскивании,
+ * Загружает POI, делает их перетаскиваемыми, обновляет Grist,
  * и устанавливает обработчик клика на маркер для выбора строки в Grist.
- * ВЕРСИЯ #224 - Улучшенная попытка setCursorPos в обработчике клика маркера
+ * ВЕРСИЯ #226 - С попыткой grist.requestFocus()
  */
 function loadExistingPOIs(records, mappings) {
     console.log("DEBUG: loadExistingPOIs: Called. Received records count:", records ? records.length : 0);
@@ -157,6 +156,7 @@ function loadExistingPOIs(records, mappings) {
                     .addTo(poiMarkersLayer).bindPopup(popupText);
                 addedCount++;
 
+                // Обработчик клика по маркеру на карте
                 marker.on('click', async function(e) {
                     const clickedMarker = e.target;
                     const gristId = clickedMarker.options.gristRecordId;
@@ -178,19 +178,31 @@ function loadExistingPOIs(records, mappings) {
                     console.log(`DEBUG: Marker click: Attempting to set cursor to rowId: ${gristId} in tableId: ${tableIdToSelectIn}`);
                     if (typeof grist.setCursorPos === 'function') {
                         grist.setCursorPos({ rowId: gristId, tableId: tableIdToSelectIn })
-                            .then(() => console.log(`DEBUG: Marker click: Grist cursor POSSIBLY set to rowId: ${gristId} in table ${tableIdToSelectIn} via grist.setCursorPos.`))
+                            .then(() => {
+                                console.log(`DEBUG: Marker click: Grist cursor POSSIBLY set to rowId: ${gristId} in table ${tableIdToSelectIn} via grist.setCursorPos.`);
+                                if (typeof grist.requestFocus === 'function') {
+                                    console.log("DEBUG: Marker click: Requesting Grist focus after setCursorPos.");
+                                    grist.requestFocus();
+                                }
+                            })
                             .catch(err => {
                                 console.error("DEBUG: Marker click: Error via grist.setCursorPos:", err);
-                                if (grist.selectedTable?.setCursorPos) { // Проверяем selectedTable перед вызовом метода
+                                if (grist.selectedTable?.setCursorPos) {
                                     console.warn("DEBUG: Marker click: Fallback to grist.selectedTable.setCursorPos...");
                                     grist.selectedTable.setCursorPos({ rowId: gristId })
-                                        .then(() => console.log(`DEBUG: Marker click: Grist cursor set via grist.selectedTable (fallback).`))
+                                        .then(() => {
+                                            console.log(`DEBUG: Marker click: Grist cursor set via grist.selectedTable (fallback).`);
+                                            if (typeof grist.requestFocus === 'function') {
+                                                console.log("DEBUG: Marker click: Requesting Grist focus after fallback setCursorPos.");
+                                                grist.requestFocus();
+                                            }
+                                        })
                                         .catch(errFallback => console.error("DEBUG: Marker click: Fallback grist.selectedTable.setCursorPos also failed:", errFallback));
                                 } else {
-                                    console.error("DEBUG: Marker click: grist.selectedTable or its setCursorPos is not available for fallback.");
+                                     console.error("DEBUG: Marker click: grist.selectedTable or its setCursorPos is not available for fallback.");
                                 }
                             });
-                    } else { console.error("DEBUG: Marker click: grist.setCursorPos function is not available."); }
+                    } else { console.error("DEBUG: Marker click: grist.setCursorPos function is not available."); alert("Функция выбора строки в Grist недоступна.");}
                 });
 
                 marker.on('dragend', async function(event) {
